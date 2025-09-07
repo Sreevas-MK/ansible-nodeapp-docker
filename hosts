@@ -1,4 +1,4 @@
 [build]
-172.31.0.61 ansible_user="ec2-user" ansible_port=22 ansible_ssh_private_key_file="client.pem"
+<ip-address-ec2-build-instance> ansible_user="ec2-user" ansible_port=22 ansible_ssh_private_key_file="client.pem"
 [deploy]
-172.31.39.22 ansible_user="ec2-user" ansible_port=22 ansible_ssh_private_key_file="client.pem"
+<ip-address-ec2-deploy-instance> ansible_user="ec2-user" ansible_port=22 ansible_ssh_private_key_file="client.pem"
