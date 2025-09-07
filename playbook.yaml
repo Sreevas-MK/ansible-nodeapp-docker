@@ -1,0 +1,153 @@
+---
+- name: "Building Express Docker Image And Pushing Image To DockerHub"
+  hosts: build
+  become: true
+
+  collections:
+    - community.docker
+    - amazon.aws
+
+  vars:
+    repo_url: "https://github.com/Sreevas-MK/docker-nodeapp.git"
+    packages:
+      - git
+      - docker
+      - python3-pip  # Needed to pip install required Python modules
+    image:
+      repository: "sreevasmk1993"
+      name: "ansible-nodeapp-docker"
+
+  tasks:
+
+    - name: "Installing Packages"
+      yum:
+        name: "{{ packages }}"
+        state: present
+
+    - name: "Adding ec2-user to Docker group"
+      user:
+        name: "ec2-user"
+        groups:
+          - "docker"
+        append: yes
+
+    - name: "Starting/Enabling Docker Engine"
+      service:
+        name: "docker"
+        state: started
+        enabled: true
+
+    - name: "Install Docker SDK and AWS Python libraries"
+      pip:
+        name:
+          - docker-py
+          - boto3
+          - botocore
+        state: present
+
+    - name: "Clone Github Repository {{ repo_url }}"
+      git:
+        repo: "{{ repo_url }}"
+        dest: "/var/express-app-repo"
+        version: "main"
+      register: repository_status
+
+    - name: "Build and tag docker image"
+      community.docker.docker_image:
+        name: "{{ image.repository }}/{{ image.name }}"
+        source: build
+        build:
+          path: "/var/express-app-repo/"
+        force_tag: true
+        tag: "{{ item }}"
+      loop:
+        - "latest"
+        - "{{ repository_status.after }}"
+
+
+    - name: "Docker login using credentials from Secrets Manager"
+      community.docker.docker_login:
+        username: "{{ lookup('amazon.aws.aws_secret', 'Docker-credentials.dockerhub_username', region='ap-south-1', nested=true) }}"
+        password: "{{ lookup('amazon.aws.aws_secret', 'Docker-credentials.dockerhub_password', region='ap-south-1', nested=true) }}"
+      #no_log: true
+
+    - name: "Pushing Docker Image To DockerHub"
+      community.docker.docker_image:
+        name: "{{ image.repository }}/{{ image.name }}"
+        source: local
+        tag: "{{ item }}"
+        push: true
+      loop:
+        - "latest"
+        - "{{ repository_status.after }}"
+
+    - name: "Deleting Local Docker Image"
+      community.docker.docker_image:
+        name: "{{ image.repository }}/{{ image.name }}"
+        source: local
+        tag: "{{ item }}"
+        state: absent
+      loop:
+        - "latest"
+        - "{{ repository_status.after }}"
+
+    - name: "Log out of DockerHub"
+      community.docker.docker_login:
+        state: absent
+
+- name: "Deploying Docker Image"
+  hosts: deploy
+  become: true
+  collections:
+    - community.docker
+
+  vars:
+    packages:
+      - docker
+      - python3-pip
+    image:
+      repository: "sreevasmk1993"
+      name: "ansible-nodeapp-docker"
+
+  tasks:
+
+    - name: "Installing Packages"
+      yum:
+        name: "{{ packages }}"
+        state: present
+
+    - name: "Adding ec2-user to Docker group"
+      user:
+        name: "ec2-user"
+        groups:
+          - "docker"
+        append: yes
+
+    - name: "Starting/Enabling Docker Engine"
+      service:
+        name: "docker"
+        state: started
+        enabled: true
+
+    - name: "Install Docker SDK for Python"
+      pip:
+        name: docker-py
+        state: present
+
+    - name: "Pulling Latest Image {{ image.repository }}/{{ image.name }}"
+      community.docker.docker_image:
+        name: "{{ image.repository }}/{{ image.name }}"
+        tag: latest
+        source: pull
+      register: image_status
+
+    - name: "Creating Container From {{ image.repository }}/{{ image.name }} image"
+      when: image_status.changed
+      community.docker.docker_container:
+        name: nodeapp
+        image: "{{ image.repository }}/{{ image.name }}:latest"
+        state: started
+        restart_policy: always
+        recreate: yes
+        published_ports:
+          - "80:3000"
